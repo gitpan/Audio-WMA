@@ -3,10 +3,12 @@ package Audio::WMA;
 use strict;
 use vars qw($VERSION);
 
-$VERSION = '0.01';
+$VERSION = '0.3';
 
 my %guidMapping   = _knownGUIDs();
 my %reversedGUIDs = reverse %guidMapping;
+
+my @ValTypeTemplates = ("", "", "V", "V", "", "v");
 
 my $DEBUG	  = 0;
 
@@ -17,7 +19,7 @@ sub new {
 	my $self  = {};
 
 	open(FILE, $file) or do {
-		warn "File does not exist or cannot be read.";
+		warn "[$file] does not exist or cannot be read: $!";
 		return undef;
 	};
 
@@ -28,6 +30,7 @@ sub new {
 	$self->{'filename'}   = $file;
 	$self->{'fileHandle'} = \*FILE;
 	$self->{'offset'}     = 0;
+	$self->{'size'}	      = -s $file;
 
 	$self->_parseWMAHeader();
 
@@ -83,9 +86,9 @@ sub _denull {
 sub _parseWMAHeader {
 	my $self = shift;
 
-	my $fh		= $self->{'fileHandle'};
+	my $fh		  = $self->{'fileHandle'};
 
-        read($fh, my $headerObjectData, 30) or return -1;
+	read($fh, my $headerObjectData, 30) or return -1;
 
 	my $objectId	  = substr($headerObjectData, 0, 16);
 	my $objectSize    = unpack('V', substr($headerObjectData, 16, 8) );
@@ -93,6 +96,9 @@ sub _parseWMAHeader {
 	my $reserved1     = vec(substr($headerObjectData, 28, 1), 0, 4);
 	my $reserved2     = vec(substr($headerObjectData, 29, 1), 0, 4);
 
+	# some sanity checks
+	return -1 if ($objectSize > $self->{'size'});
+	
 	if ($DEBUG) {
 		printf("ObjectId: [%s]\n", _byteStringToGUID($objectId));
 		print  "objectSize: [$objectSize]\n";
@@ -111,29 +117,42 @@ sub _parseWMAHeader {
 
 		my $nextObjectGUIDName = $reversedGUIDs{$nextObjectGUIDText};
 
+		# some sanity checks
+		return -1 if (!defined($nextObjectGUIDName));
+		return -1 if (!defined $nextObjectSize || $nextObjectSize > $self->{'size'});
+
 		if ($DEBUG) {
 			print "nextObjectGUID: [" . $nextObjectGUIDText . "]\n";
 			print "nextObjectName: [" . $nextObjectGUIDName . "]\n";
 			print "nextObjectSize: [" . $nextObjectSize . "]\n";
 		}
-                
-		# start the different header types parsing              
-		if ($nextObjectGUIDName eq 'GETID3_ASF_File_Properties_Object') {
+        
+        	if (defined($nextObjectGUIDName)) {
 
-			$self->_parseASFFilePropertiesObject();
-			next;
-		}
+			# start the different header types parsing              
+			if ($nextObjectGUIDName eq 'GETID3_ASF_File_Properties_Object') {
+	
+				$self->_parseASFFilePropertiesObject();
+				next;
+			}
+	
+			if ($nextObjectGUIDName eq 'GETID3_ASF_Content_Description_Object') {
+	
+				$self->_parseASFContentDescriptionObject();
+				next;
+			}
 
-		if ($nextObjectGUIDName eq 'GETID3_ASF_Content_Description_Object') {
+			if ($nextObjectGUIDName eq 'GETID3_ASF_Content_Encryption_Object') {
 
-			$self->_parseASFContentDescriptionObject();
-			next;
-		}
-
-		if ($nextObjectGUIDName eq 'GETID3_ASF_Extended_Content_Description_Object') {
-
-			$self->_parseASFExtendedContentDescriptionObject();
-			next;
+				$self->_parseASFContentEncryptionObject();
+				next;
+			}
+	
+			if ($nextObjectGUIDName eq 'GETID3_ASF_Extended_Content_Description_Object') {
+	
+				$self->_parseASFExtendedContentDescriptionObject();
+				next;
+			}
 		}
 
 		# set our next object size
@@ -152,6 +171,13 @@ sub _parseWMAHeader {
 	}
 
 	delete $self->{'EXT'};
+}
+
+# We can't do anything about DRM'd files.
+sub _parseASFContentEncryptionObject {
+	my $self = shift;
+
+	$self->{'INFO'}->{'drm'} = 1;
 }
 
 sub _parseASFFilePropertiesObject {
@@ -230,9 +256,40 @@ sub _parseASFExtendedContentDescriptionObject {
 		$ext{'content'}->{$id}->{'value_type'}   = unpack('v', $self->_readAndIncrementOffset(2));
 		$ext{'content'}->{$id}->{'value_length'} = unpack('v', $self->_readAndIncrementOffset(2));
 
-		$ext{'content'}->{$id}->{'value'}        = _denull( $self->_readAndIncrementOffset(
-			$ext{'content'}->{$id}->{'value_length'}
-		) );
+		# Value types from ASF spec:
+		# 0 = unicode string
+		# 1 = BYTE array
+		# 2 = BOOL (32 bit)
+		# 3 = DWORD (32 bit)
+		# 4 = QWORD (64 bit)
+		# 5 = WORD (16 bit)
+		my $value = $self->_readAndIncrementOffset( $ext{'content'}->{$id}->{'value_length'} );
+
+		if ($ext{'content'}->{$id}->{'value_type'} <= 1) {
+
+			$ext{'content'}->{$id}->{'value'} = _denull($value);
+
+		} elsif($ext{'content'}->{$id}->{'value_type'} == 4) {
+
+			# Looks like "Q" isn't supported w/ unpack on win32
+			$ext{'content'}->{$id}->{'value'} = _parse64BitString($value);
+
+		} else {
+
+			# Value types 0, 1, 3 handled separately
+			$ext{'content'}->{$id}->{'value'} = unpack(
+				$ValTypeTemplates[ $ext{'content'}->{$id}->{'value_type'} ], $value
+			);
+		}
+
+		if ($DEBUG) {
+			print "Ext Cont Desc: $id";
+			print " name  = " . $ext{'content'}->{$id}->{'name'};
+			print " value = " . $ext{'content'}->{$id}->{'value'};
+			print " type  = " . $ext{'content'}->{$id}->{'value_type'};
+			print " value_length = " . $ext{'content'}->{$id}->{'value_length'};
+			print "\n";
+		}
 	}
 
 	$self->{'EXT'} = \%ext;
@@ -315,7 +372,7 @@ sub _knownGUIDs {
 sub _guidToByteString {
 	my $guidString  = shift;
 
-	# Microsoft defines these 16-byte (128-bit) GUIDs in the strangest way:
+	# Microsoft defines these 16-byte (128-bit) GUIDs as:
 	# first 4 bytes are in little-endian order
 	# next 2 bytes are appended in little-endian order
 	# next 2 bytes are appended in little-endian order
@@ -356,6 +413,7 @@ sub _byteStringToGUID {
 
 	my $guidString;
 
+	# this reverses _guidToByteString.
 	$guidString  = sprintf("%02X", ord($byteString[3]));
 	$guidString .= sprintf("%02X", ord($byteString[2]));
 	$guidString .= sprintf("%02X", ord($byteString[1]));
@@ -421,11 +479,11 @@ Audio::FLAC, L<http://getid3.sf.net/>
 
 =head1 AUTHOR
 
-Daniel Sully, E<lt>daniel@cpan.orgE<gt>
+Dan Sully, E<lt>Dan@cpan.orgE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright 2003 by Daniel Sully
+Copyright 2003 by Dan Sully
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself. 
