@@ -19,11 +19,11 @@ BEGIN { use_ok('Audio::WMA') };
 
 	ok($wma->info('playtime_seconds') == 16.91);
 
-	my $comments = $wma->comment();
+	my $tags = $wma->tags();
 
-	ok $comments;
+	ok $tags;
 
-	is($wma->comment('title'), 'Upgrade Your Player');
+	is($wma->tags('title'), 'Upgrade Your Player');
 }
 
 __END__

@@ -5,5 +5,5 @@ WriteMakefile(
     'NAME'		=> 'Audio::WMA',
     'VERSION_FROM'	=> 'WMA.pm',
     'PREREQ_PM'		=> {},
-    'AUTHOR'		=> 'Daniel Sully <daniel@electricrain.com>',
+    'AUTHOR'		=> 'Daniel Sully <daniel@cpan.org>',
 );
