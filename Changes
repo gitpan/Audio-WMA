@@ -1,5 +1,9 @@
 Revision history for Perl extension Audio::WMA.
 
+0.7 Thu Oct  7 16:16:45 PDT 2004
+
+	Fix infinite loop case for 0 length objects.
+
 0.6 Sat Oct  2 11:35:56 PDT 2004
 
 	Handle Extended Header Objects, and Metadata Library Objects for additional author information.
