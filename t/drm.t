@@ -7,22 +7,21 @@ BEGIN { use_ok('Audio::WMA') };
 #########################
 
 {
-	my $wma = Audio::WMA->new('data/test2.wma');
+	my $wma = Audio::WMA->new('data/test-drm.wma');
 
-	ok $wma;
+	ok($wma);
 
 	my $info = $wma->info();
 
 	ok $info;
 
-	ok($wma->info('sample_rate') == 44100);
+	ok($wma->info('max_bitrate') == 160639);
 
 	my $tags = $wma->tags();
 
 	ok $tags;
 
-	# This has an extended data object.
-	is($wma->tags('author')->[1], ' John Doe');
+	is($wma->tags('title'), 'Love Is Strange');
 }
 
 __END__
