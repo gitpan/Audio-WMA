@@ -1,0 +1,13 @@
+abstract: Perl extension for reading WMA/ASF Metadata
+author: 'Dan Sully, <daniel@cpan.org>'
+distribution_type: module
+generated_by: Module::Install version 0.64
+license: perl
+name: Audio-WMA
+no_index:
+  directory:
+    - inc
+    - t
+requires:
+  perl: 5.005
+version: 1.1
